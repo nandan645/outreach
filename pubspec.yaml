@@ -1,0 +1,62 @@
+name: heydoc_outreach
+description: "HeyDoc Outreach"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  file_picker: ^12.1.1
+  flutter:
+    sdk: flutter
+  pdf: ^3.13.0
+  printing: ^5.15.0
+  http: ^1.2.0
+  flutter_svg: ^2.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: Satoshi
+      fonts:
+        - asset: assets/fonts/Satoshi-Light.ttf
+          weight: 300
+        - asset: assets/fonts/Satoshi-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Satoshi-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Satoshi-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Satoshi-Black.ttf
+          weight: 900
+        - asset: assets/fonts/Satoshi-Italic.ttf
+          style: italic
+        - asset: assets/fonts/Satoshi-BoldItalic.ttf
+          weight: 700
+          style: italic
+  assets:
+    - assets/prompts/
+    - assets/india_network_map.png
+    - assets/presets/
+    - assets/presets/metric_cards/
+    - assets/presets/mobile_mockup/
+    - assets/presets/multi_feature_showcase/
+    - assets/presets/dynamic_presets/
+    - assets/presets/architecture_flow_presets/
+    - assets/presets/consumer_experience/
+    - assets/presets/platform_showcase/
+    - assets/presets/enterprise_brain/
+    - assets/presets/patient_journey_steps/
+    - assets/presets/intelligence_dashboards/
+    - assets/presets/modular_ui_mockups/
+    - assets/presets/core_capabilities/
+    - assets/presets/logo_presets/
+    - assets/presets/comparison_ecosystem_presets/
+    - assets/hero/
+
