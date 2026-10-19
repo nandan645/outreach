@@ -1803,8 +1803,8 @@ class SlideData {
   void setImagePath(String key, String path) {
     final overrides = Map<String, dynamic>.from(rawContent['image_overrides'] as Map<String, dynamic>? ?? {});
     
-    // Non-image state keys (like slot counts) should be stored directly in rawContent, not in image_overrides
-    if (key.endsWith('_count')) {
+    // Non-image state keys (like slot counts or layout settings) should be stored directly in rawContent, not in image_overrides
+    if (key.endsWith('_count') || key.endsWith('_layout') || key.endsWith('_mode')) {
       overrides.remove(key);
       if (overrides.isEmpty) {
         rawContent.remove('image_overrides');
@@ -1855,11 +1855,20 @@ class SlideData {
 
     content.remove('notes');
 
+    final isCustom = slideTypeStr == 'custom_slide';
+    final defaultTitle = isCustom ? 'Lorem Ipsum' : 'Untitled Slide';
+    final defaultSubtitle = isCustom ? 'Lorem ipsum dolor sit amet, consectetur adipiscing elit.' : '';
+
+    final rawTitle = content['title'] as String?;
+    final title = (rawTitle != null && rawTitle.trim().isNotEmpty) ? rawTitle : defaultTitle;
+    final rawSubtitle = content['subtitle'] as String?;
+    final subtitle = (rawSubtitle != null && rawSubtitle.trim().isNotEmpty) ? rawSubtitle : defaultSubtitle;
+
     return SlideData(
       id: json['id'] as String? ?? 'slide_000',
       slideType: slideTypeStr,
-      title: content['title'] as String? ?? 'Untitled Slide',
-      subtitle: content['subtitle'] as String? ?? '',
+      title: title,
+      subtitle: subtitle,
       textAlign: align,
       isHidden: isHidden,
       rawContent: content,
@@ -6185,12 +6194,13 @@ class _PresentationEditorScreenState extends State<PresentationEditorScreen> {
                   onSelected: (String slideType) {
                     final registeredSlide = SlideRegistry.get(slideType);
                     final newSlideId = 'slide_${DateTime.now().millisecondsSinceEpoch}';
+                    final isCustom = slideType == 'custom_slide';
                     final newSlideMap = {
                       'id': newSlideId,
                       'slideType': slideType,
                       'content': {
-                        'title': registeredSlide.displayName,
-                        'subtitle': '',
+                        'title': isCustom ? 'Lorem Ipsum' : registeredSlide.displayName,
+                        'subtitle': isCustom ? 'Lorem ipsum dolor sit amet, consectetur adipiscing elit.' : '',
                       },
                     };
                     final newSlideData = SlideData.fromJson(newSlideMap);
@@ -6472,6 +6482,145 @@ class _PresentationEditorScreenState extends State<PresentationEditorScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
 
+
+                  if (activeSlide.slideType == 'custom_slide') ...[
+                    _buildSectionHeader('CUSTOM SLIDE IMAGES & LAYOUT'),
+                    const SizedBox(height: 10),
+                    Builder(
+                      builder: (context) {
+                        final rawCount = activeSlide.rawContent['custom_images_count'];
+                        int count = 1;
+                        if (rawCount is int) count = rawCount.clamp(1, 6);
+                        if (rawCount is String) count = (int.tryParse(rawCount) ?? 1).clamp(1, 6);
+                        final mode = activeSlide.rawContent['custom_layout_mode']?.toString() ?? 'auto';
+
+                        return Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: cardBg,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: cardBorder),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Number of Images',
+                                    style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.w600),
+                                  ),
+                                  Text(
+                                    '$count / 6',
+                                    style: TextStyle(color: _accentColor, fontSize: 12, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: List.generate(6, (i) {
+                                  final num = i + 1;
+                                  final isCurrent = num == count;
+                                  return Expanded(
+                                    child: Padding(
+                                      padding: EdgeInsets.only(right: i == 5 ? 0 : 4),
+                                      child: InkWell(
+                                        onTap: () {
+                                          setState(() {
+                                            activeSlide.setImagePath('custom_images_count', '$num');
+                                          });
+                                          _savePresentation();
+                                        },
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: isCurrent ? _accentColor : (isLight ? const Color(0xFFF3F4F6) : const Color(0xFF2C3847)),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(
+                                              color: isCurrent ? _accentColor : cardBorder,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            '$num',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
+                                              color: isCurrent ? Colors.white : textColor,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Layout Arrangement',
+                                style: TextStyle(color: subtextColor, fontSize: 11.5),
+                              ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  {'key': 'auto', 'label': 'Auto', 'icon': Icons.auto_awesome_mosaic_rounded},
+                                  {'key': 'columns', 'label': 'Columns', 'icon': Icons.view_column_rounded},
+                                  {'key': 'grid', 'label': 'Grid', 'icon': Icons.grid_view_rounded},
+                                  {'key': 'hero', 'label': 'Hero Split', 'icon': Icons.splitscreen_rounded},
+                                  {'key': 'rows', 'label': 'Rows', 'icon': Icons.table_rows_rounded},
+                                ].map((opt) {
+                                  final optKey = opt['key'] as String;
+                                  final optLabel = opt['label'] as String;
+                                  final optIcon = opt['icon'] as IconData;
+                                  final isSelected = mode == optKey;
+
+                                  return InkWell(
+                                    onTap: () {
+                                      setState(() {
+                                        activeSlide.setImagePath('custom_layout_mode', optKey);
+                                      });
+                                      _savePresentation();
+                                    },
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                                      decoration: BoxDecoration(
+                                        color: isSelected ? _accentColor.withValues(alpha: isLight ? 0.15 : 0.25) : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: isSelected ? _accentColor : cardBorder,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(optIcon, size: 13, color: isSelected ? _accentColor : subtextColor),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            optLabel,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                              color: isSelected ? _accentColor : textColor,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                  ],
 
                   // 1. DYNAMIC SELECTED TEXT CONTENT EDITING SECTION
                   _buildSectionHeader('SELECTED TEXT CONTENT'),

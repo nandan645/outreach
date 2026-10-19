@@ -20,6 +20,7 @@ export 'types/personalized_player_experience_slide.dart';
 export 'types/vision_ai_to_coach_intelligence_slide.dart';
 export 'types/operating_layer_agents_slide.dart';
 export 'types/what_company_gains_slide.dart';
+export 'types/custom_slide.dart';
 
 import 'slide_registry.dart';
 import 'types/hero_diagram_slide.dart';
@@ -40,6 +41,7 @@ import 'types/personalized_player_experience_slide.dart';
 import 'types/vision_ai_to_coach_intelligence_slide.dart';
 import 'types/operating_layer_agents_slide.dart';
 import 'types/what_company_gains_slide.dart';
+import 'types/custom_slide.dart';
 
 /// Initializes and registers all active slide types
 void initSlideRegistry() {
@@ -61,5 +63,6 @@ void initSlideRegistry() {
   SlideRegistry.register(VisionAiToCoachIntelligenceSlide());
   SlideRegistry.register(OperatingLayerAgentsSlide());
   SlideRegistry.register(WhatCompanyGainsSlide());
+  SlideRegistry.register(CustomSlide());
 }
 
