@@ -3,8 +3,13 @@ import '../../presentation_editor_screen.dart';
 import '../base_slide.dart';
 import '../slide_context.dart';
 
-/// A highly customizable, responsive slide supporting 1 to 6 images with dynamic
-/// multi-image layouts (Auto, Columns, Grid, Hero Split, and Stacked Rows).
+/// A highly customizable, responsive slide supporting 1 to 6 slots.
+/// Each slot can independently be configured as an Image, a Text card,
+/// or a combined Image + Text block across multiple responsive layouts
+/// (Auto, Columns, Grid, Hero Split, and Stacked Rows).
+///
+/// When "Both" is selected, users can drag and drop to swap the positions
+/// of the Image and Text sections, or tap the interactive Swap button.
 class CustomSlide extends BaseSlide {
   @override
   String get type => 'custom_slide';
@@ -35,10 +40,12 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
       final parsed = int.tryParse(rawVal);
       if (parsed != null) return parsed.clamp(1, 6);
     }
-    // Infer count from existing non-empty slots if any
+    // Infer count from existing non-empty slots or slot types
     int detected = 1;
     for (int i = 1; i < 6; i++) {
-      if (slide.getImagePath('custom_image_$i').isNotEmpty) {
+      if (slide.getImagePath('custom_image_$i').isNotEmpty ||
+          slide.rawContent['custom_slot_${i}_type'] != null ||
+          slide.rawContent['text_overrides']?['card_${i + 1}_title'] != null) {
         detected = i + 1;
       }
     }
@@ -52,6 +59,25 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
       return mode;
     }
     return 'auto';
+  }
+
+  String _getSlotType(SlideData slide, int index) {
+    final explicitType = slide.rawContent['custom_slot_${index}_type']?.toString();
+    if (explicitType != null && ['image', 'text', 'both'].contains(explicitType)) {
+      return explicitType;
+    }
+    return 'image';
+  }
+
+  bool _isTextFirstInSlot(SlideData slide, int index) {
+    return slide.rawContent['custom_slot_${index}_order'] == 'text_first';
+  }
+
+  void _toggleSlotOrder(int index) {
+    final callback = widget.renderContext.onImageChanged;
+    if (callback == null) return;
+    final isTextFirst = _isTextFirstInSlot(widget.renderContext.slide, index);
+    callback('custom_slot_${index}_order', isTextFirst ? 'image_first' : 'text_first');
   }
 
   String _getImagePathForSlot(SlideData slide, int index) {
@@ -75,23 +101,17 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
   }
 
   void _removeImageSlot(int removeIndex, int currentCount) {
-    final callback = widget.renderContext.onImageChanged;
-    if (callback == null) return;
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
 
-    if (currentCount <= 1) {
-      _setImagePathForSlot(0, '');
-      return;
-    }
-
-    // Shift remaining images forward
     final slide = widget.renderContext.slide;
-    for (int i = removeIndex; i < currentCount - 1; i++) {
-      final nextPath = _getImagePathForSlot(slide, i + 1);
-      _setImagePathForSlot(i, nextPath);
+    slide.deleteCustomSlot(removeIndex);
+
+    final callback = widget.renderContext.onImageChanged;
+    if (callback != null) {
+      final newCount = slide.rawContent['custom_images_count']?.toString() ?? '1';
+      callback('custom_images_count', newCount);
     }
-    // Clear last slot
-    _setImagePathForSlot(currentCount - 1, '');
-    callback('custom_images_count', '${currentCount - 1}');
   }
 
   @override
@@ -112,7 +132,7 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
         renderContext.buildTitleHeader(context),
         const SizedBox(height: 10),
 
-        // Responsive Multi-Image Canvas Area
+        // Responsive Multi-Slot Canvas Area
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -145,7 +165,15 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
     required bool canEdit,
   }) {
     if (imageCount <= 1) {
-      return _buildSingleSlot(context, 0, slide, isLight, accentColor, canEdit, imageCount);
+      return _buildSlotContainer(
+        context,
+        index: 0,
+        slide: slide,
+        isLight: isLight,
+        accentColor: accentColor,
+        canEdit: canEdit,
+        totalCount: imageCount,
+      );
     }
 
     String effectiveMode = layoutMode;
@@ -182,27 +210,6 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
     return 'grid';
   }
 
-  /// 1 Image: Full Expansive Slot
-  Widget _buildSingleSlot(
-    BuildContext context,
-    int index,
-    SlideData slide,
-    bool isLight,
-    Color accentColor,
-    bool canEdit,
-    int totalCount,
-  ) {
-    return _buildSlotContainer(
-      context,
-      index: index,
-      slide: slide,
-      isLight: isLight,
-      accentColor: accentColor,
-      canEdit: canEdit,
-      totalCount: totalCount,
-    );
-  }
-
   /// Columns Layout (Side-by-side)
   Widget _buildColumnsLayout(
     BuildContext context,
@@ -214,7 +221,6 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
     int count,
   ) {
     if (constraints.maxWidth < 420) {
-      // Responsive fallback for very narrow viewports
       return _buildRowsLayout(context, slide, isLight, accentColor, canEdit, count);
     }
 
@@ -269,7 +275,7 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
     );
   }
 
-  /// Hero Split Layout (Main prominent image on left, secondary images stacked on right)
+  /// Hero Split Layout (Main prominent slot on left, secondary slots stacked on right)
   Widget _buildHeroSplitLayout(
     BuildContext context,
     BoxConstraints constraints,
@@ -282,7 +288,6 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
     final isWide = constraints.maxWidth >= 550;
 
     if (!isWide) {
-      // Stack hero on top, secondary side-by-side below
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -296,7 +301,6 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
               accentColor: accentColor,
               canEdit: canEdit,
               totalCount: count,
-              badgeLabel: 'Hero Image',
             ),
           ),
           const SizedBox(height: 12),
@@ -327,7 +331,6 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
       );
     }
 
-    // Wide: Hero on left (60%), Stacked column on right (40%)
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -341,7 +344,6 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
             accentColor: accentColor,
             canEdit: canEdit,
             totalCount: count,
-            badgeLabel: 'Hero Image',
           ),
         ),
         const SizedBox(width: 12),
@@ -387,7 +389,6 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
     }
 
     if (count == 3) {
-      // 1 Top, 2 Bottom
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -440,7 +441,6 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
     }
 
     if (count == 4) {
-      // 2x2 Grid
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -509,7 +509,7 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
       );
     }
 
-    // 5 or 6 items: 2 rows (3 on top, 2 or 3 below)
+    // 5 or 6 items
     final topCount = 3;
     final bottomCount = count - topCount;
 
@@ -564,7 +564,7 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
     );
   }
 
-  /// Individual Image Card Container with ImageDropzone & Slot Badge/Remove Button
+  /// Individual Slot Container supporting Image, Text, or Both (with drag & drop swap)
   Widget _buildSlotContainer(
     BuildContext context, {
     required int index,
@@ -573,10 +573,8 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
     required Color accentColor,
     required bool canEdit,
     required int totalCount,
-    String? badgeLabel,
   }) {
-    final imageKey = index == 0 ? 'custom_image' : 'custom_image_$index';
-    final initialPath = _getImagePathForSlot(slide, index);
+    final slotType = _getSlotType(slide, index);
     final cardBg = isLight ? Colors.white : const Color(0xFF1E293B);
     final cardBorder = isLight ? const Color(0xFFE2E8F0) : const Color(0xFF334155);
 
@@ -596,66 +594,398 @@ class _CustomSlideWidgetState extends State<_CustomSlideWidget> {
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          // Main Image Dropzone / Picker filling full slot
+          // Slot Main Body
           Positioned.fill(
-            child: ImageDropzoneWidget(
-              slideId: slide.id,
-              imageKey: imageKey,
-              companyName: widget.renderContext.companyName,
-              label: 'Slot ${index + 1} Image',
-              formatHint: 'Presets or Upload',
-              height: double.infinity,
-              initialImagePath: initialPath,
-              folderPath: widget.renderContext.folderPath,
-              onImageSelected: (path) {
-                _setImagePathForSlot(index, path);
-              },
+            child: _buildSlotBody(
+              context,
+              index: index,
+              slotType: slotType,
+              slide: slide,
+              isLight: isLight,
+              accentColor: accentColor,
+              canEdit: canEdit,
             ),
           ),
 
-          // Slot Badge & Delete Slot Button (when canEdit and totalCount > 1)
-          if (canEdit && totalCount > 1)
+          // Remove / Clear Slot Button (when editing)
+          if (canEdit)
             Positioned(
               top: 8,
               right: 8,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(4),
+              child: Tooltip(
+                message: totalCount > 1 ? 'Remove slot' : 'Clear slot',
+                child: InkWell(
+                  onTap: () => _removeImageSlot(index, totalCount),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Color(0xCCEF4444),
+                      shape: BoxShape.circle,
                     ),
-                    child: Text(
-                      badgeLabel ?? 'Slot ${index + 1}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  InkWell(
-                    onTap: () => _removeImageSlot(index, totalCount),
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.all(3.5),
-                      decoration: const BoxDecoration(
-                        color: Color(0xCCEF4444), // Crimson badge
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.close_rounded,
-                        size: 11,
-                        color: Colors.white,
-                      ),
+                    child: const Icon(
+                      Icons.close_rounded,
+                      size: 12,
+                      color: Colors.white,
                     ),
                   ),
-                ],
+                ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  /// Builds slot content depending on slotType: 'image', 'text', or 'both'
+  Widget _buildSlotBody(
+    BuildContext context, {
+    required int index,
+    required String slotType,
+    required SlideData slide,
+    required bool isLight,
+    required Color accentColor,
+    required bool canEdit,
+  }) {
+    if (slotType == 'text') {
+      return _buildTextCardContent(context, index, slide, isLight, accentColor);
+    }
+
+    if (slotType == 'both') {
+      return _buildBothSlotWithDragSwap(
+        context,
+        index: index,
+        slide: slide,
+        isLight: isLight,
+        accentColor: accentColor,
+        canEdit: canEdit,
+      );
+    }
+
+    // Default: Image only
+    return _buildImageContent(index, slide);
+  }
+
+  /// Combined "Both" Slot with Interactive Drag & Drop + Clickable Swapping
+  Widget _buildBothSlotWithDragSwap(
+    BuildContext context, {
+    required int index,
+    required SlideData slide,
+    required bool isLight,
+    required Color accentColor,
+    required bool canEdit,
+  }) {
+    final isTextFirst = _isTextFirstInSlot(slide, index);
+
+    final imageWidget = _buildDraggableSection(
+      context: context,
+      slotIndex: index,
+      sectionType: 'image',
+      canEdit: canEdit,
+      accentColor: accentColor,
+      isLight: isLight,
+      child: _buildImageContent(index, slide),
+    );
+
+    final textWidget = _buildDraggableSection(
+      context: context,
+      slotIndex: index,
+      sectionType: 'text',
+      canEdit: canEdit,
+      accentColor: accentColor,
+      isLight: isLight,
+      child: _buildTextCardContent(context, index, slide, isLight, accentColor, isCompact: true),
+    );
+
+    final dividerWidget = Container(
+      height: 1,
+      color: isLight ? const Color(0xFFF1F5F9) : const Color(0xFF334155),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: isTextFirst
+          ? [
+              Expanded(flex: 48, child: textWidget),
+              dividerWidget,
+              Expanded(flex: 52, child: imageWidget),
+            ]
+          : [
+              Expanded(flex: 52, child: imageWidget),
+              dividerWidget,
+              Expanded(flex: 48, child: textWidget),
+            ],
+    );
+  }
+
+  /// Wraps Image or Text section with DragTarget & Draggable handle for intuitive drag-and-swap
+  Widget _buildDraggableSection({
+    required BuildContext context,
+    required int slotIndex,
+    required String sectionType, // 'image' or 'text'
+    required Widget child,
+    required bool canEdit,
+    required Color accentColor,
+    required bool isLight,
+  }) {
+    if (!canEdit) {
+      return child;
+    }
+
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (details) => details.data != sectionType,
+      onAcceptWithDetails: (details) {
+        _toggleSlotOrder(slotIndex);
+      },
+      builder: (context, candidateData, rejectedData) {
+        final isHovered = candidateData.isNotEmpty;
+
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: isHovered
+                ? Border.all(color: accentColor, width: 2.2)
+                : Border.all(color: Colors.transparent, width: 1.0),
+            color: isHovered ? accentColor.withValues(alpha: 0.12) : Colors.transparent,
+          ),
+          child: Stack(
+            children: [
+              Positioned.fill(child: child),
+
+              // Drop preview banner when dragging other block over this target
+              if (isHovered)
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: accentColor.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    alignment: Alignment.center,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isLight ? Colors.white : const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: accentColor, width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.15),
+                            blurRadius: 8,
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.swap_vert_rounded, size: 16, color: accentColor),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Release to Swap Position',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: accentColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              // Drag Handle Chip on top-left of the section
+              Positioned(
+                top: 6,
+                left: 6,
+                child: Draggable<String>(
+                  data: sectionType,
+                  feedback: Material(
+                    color: Colors.transparent,
+                    elevation: 10,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: isLight ? Colors.white : const Color(0xFF1E293B),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: accentColor, width: 1.8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.drag_indicator_rounded, size: 14, color: accentColor),
+                          const SizedBox(width: 4),
+                          Text(
+                            sectionType == 'image' ? 'Image Section' : 'Text Section',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.bold,
+                              color: isLight ? const Color(0xFF0F172A) : Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  childWhenDragging: Opacity(
+                    opacity: 0.25,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: accentColor.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Icon(Icons.drag_indicator_rounded, size: 12, color: Colors.white),
+                    ),
+                  ),
+                  child: Tooltip(
+                    message: 'Drag over other section to swap positions',
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.grab,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.drag_indicator_rounded, size: 11, color: Colors.white),
+                            const SizedBox(width: 3),
+                            Text(
+                              sectionType == 'image' ? 'Image' : 'Text',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+
+  /// Image Content Area (ImageDropzoneWidget)
+  Widget _buildImageContent(int index, SlideData slide) {
+    final imageKey = index == 0 ? 'custom_image' : 'custom_image_$index';
+    final initialPath = _getImagePathForSlot(slide, index);
+
+    return ImageDropzoneWidget(
+      slideId: slide.id,
+      imageKey: imageKey,
+      companyName: widget.renderContext.companyName,
+      label: 'Slot ${index + 1} Image',
+      formatHint: 'Presets or Upload',
+      height: double.infinity,
+      initialImagePath: initialPath,
+      folderPath: widget.renderContext.folderPath,
+      onImageSelected: (path) {
+        _setImagePathForSlot(index, path);
+      },
+    );
+  }
+
+  /// Text Card Area (Editable Title and Body / Paragraph)
+  Widget _buildTextCardContent(
+    BuildContext context,
+    int index,
+    SlideData slide,
+    bool isLight,
+    Color accentColor, {
+    bool isCompact = false,
+  }) {
+    final titleKey = 'card_${index + 1}_title';
+    final subtitleKey = 'card_${index + 1}_subtitle';
+
+    final defaultTitle = 'Point ${index + 1}';
+    final defaultSubtitle =
+        'Add your key insight, clinical workflow step, metric breakdown, or strategic initiative description here.';
+
+    final textDark = isLight ? const Color(0xFF0F172A) : Colors.white;
+    final textMuted = isLight ? const Color(0xFF64748B) : const Color(0xFF94A3B8);
+
+    return Padding(
+      padding: EdgeInsets.all(isCompact ? 14 : 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Title with colored accent line
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 4,
+                height: isCompact ? 16 : 20,
+                margin: const EdgeInsets.only(right: 8),
+                decoration: BoxDecoration(
+                  color: accentColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Expanded(
+                child: SelectableTextElement(
+                  elementKey: titleKey,
+                  label: 'Card ${index + 1} Title',
+                  selectedElementKey: widget.renderContext.selectedElementKey,
+                  onSelectElement: widget.renderContext.onSelectElement,
+                  child: Text(
+                    slide.getElementText(titleKey, defaultTitle),
+                    style: TextStyle(
+                      fontSize: slide.getFontSize(titleKey, isCompact ? 16.0 : 20.0),
+                      fontWeight: slide.getFontWeight(titleKey, FontWeight.bold),
+                      color: textDark,
+                      height: 1.25,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: isCompact ? 6 : 10),
+
+          // Subtitle / Body Description
+          Expanded(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: SelectableTextElement(
+                elementKey: subtitleKey,
+                label: 'Card ${index + 1} Description',
+                selectedElementKey: widget.renderContext.selectedElementKey,
+                onSelectElement: widget.renderContext.onSelectElement,
+                child: Text(
+                  slide.getElementText(subtitleKey, defaultSubtitle),
+                  style: TextStyle(
+                    fontSize: slide.getFontSize(subtitleKey, isCompact ? 12.5 : 14.5),
+                    fontWeight: slide.getFontWeight(subtitleKey, FontWeight.normal),
+                    color: textMuted,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

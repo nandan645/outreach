@@ -1803,8 +1803,8 @@ class SlideData {
   void setImagePath(String key, String path) {
     final overrides = Map<String, dynamic>.from(rawContent['image_overrides'] as Map<String, dynamic>? ?? {});
     
-    // Non-image state keys (like slot counts or layout settings) should be stored directly in rawContent, not in image_overrides
-    if (key.endsWith('_count') || key.endsWith('_layout') || key.endsWith('_mode')) {
+    // Non-image state keys (like slot counts, layout settings, slot types, or slot order) should be stored directly in rawContent, not in image_overrides
+    if (key.endsWith('_count') || key.endsWith('_layout') || key.endsWith('_mode') || key.endsWith('_type') || key.endsWith('_order')) {
       overrides.remove(key);
       if (overrides.isEmpty) {
         rawContent.remove('image_overrides');
@@ -1826,6 +1826,189 @@ class SlideData {
       rawContent['image_path'] = valToStore;
     }
     rawContent['image_overrides'] = overrides;
+  }
+
+  /// Completely flushes all data associated with a custom slide slot (image, type, order, card title/subtitle, font styles).
+  void flushCustomSlot(int slotIndex) {
+    // 1. Flush image overrides and rawContent image keys
+    final imageOverrides = Map<String, dynamic>.from(rawContent['image_overrides'] as Map<String, dynamic>? ?? {});
+    imageOverrides.remove('custom_image_$slotIndex');
+    rawContent.remove('custom_image_$slotIndex');
+    if (slotIndex == 0) {
+      imageOverrides.remove('custom_image_0');
+      imageOverrides.remove('custom_image');
+      rawContent.remove('custom_image_0');
+      rawContent.remove('custom_image');
+    }
+    if (imageOverrides.isEmpty) {
+      rawContent.remove('image_overrides');
+    } else {
+      rawContent['image_overrides'] = imageOverrides;
+    }
+
+    // 2. Flush slot configurations
+    rawContent.remove('custom_slot_${slotIndex}_type');
+    rawContent.remove('custom_slot_${slotIndex}_order');
+
+    // 3. Flush text card overrides
+    final titleKey = 'card_${slotIndex + 1}_title';
+    final subtitleKey = 'card_${slotIndex + 1}_subtitle';
+
+    final textOverrides = Map<String, dynamic>.from(rawContent['text_overrides'] as Map<String, dynamic>? ?? {});
+    textOverrides.remove(titleKey);
+    textOverrides.remove(subtitleKey);
+    if (textOverrides.isEmpty) {
+      rawContent.remove('text_overrides');
+    } else {
+      rawContent['text_overrides'] = textOverrides;
+    }
+
+    // 4. Flush font size overrides
+    final fontSizeOverrides = Map<String, dynamic>.from(rawContent['font_size_overrides'] as Map<String, dynamic>? ?? {});
+    fontSizeOverrides.remove(titleKey);
+    fontSizeOverrides.remove(subtitleKey);
+    if (fontSizeOverrides.isEmpty) {
+      rawContent.remove('font_size_overrides');
+    } else {
+      rawContent['font_size_overrides'] = fontSizeOverrides;
+    }
+
+    // 5. Flush font weight overrides
+    final fontWeightOverrides = Map<String, dynamic>.from(rawContent['font_weight_overrides'] as Map<String, dynamic>? ?? {});
+    fontWeightOverrides.remove(titleKey);
+    fontWeightOverrides.remove(subtitleKey);
+    if (fontWeightOverrides.isEmpty) {
+      rawContent.remove('font_weight_overrides');
+    } else {
+      rawContent['font_weight_overrides'] = fontWeightOverrides;
+    }
+  }
+
+  /// Copies all data from one custom slot to another.
+  void copyCustomSlotData({required int fromIndex, required int toIndex}) {
+    // 1. Copy image
+    final fromImagePath = getImagePath(fromIndex == 0 ? 'custom_image' : 'custom_image_$fromIndex');
+    if (fromImagePath.isNotEmpty) {
+      setImagePath(toIndex == 0 ? 'custom_image' : 'custom_image_$toIndex', fromImagePath);
+      if (toIndex == 0) {
+        setImagePath('custom_image_0', fromImagePath);
+      }
+    } else {
+      final overrides = Map<String, dynamic>.from(rawContent['image_overrides'] as Map<String, dynamic>? ?? {});
+      overrides.remove('custom_image_$toIndex');
+      rawContent.remove('custom_image_$toIndex');
+      if (toIndex == 0) {
+        overrides.remove('custom_image_0');
+        overrides.remove('custom_image');
+        rawContent.remove('custom_image_0');
+        rawContent.remove('custom_image');
+      }
+      if (overrides.isEmpty) {
+        rawContent.remove('image_overrides');
+      } else {
+        rawContent['image_overrides'] = overrides;
+      }
+    }
+
+    // 2. Copy slot type & order
+    final type = rawContent['custom_slot_${fromIndex}_type']?.toString();
+    if (type != null && type.isNotEmpty) {
+      rawContent['custom_slot_${toIndex}_type'] = type;
+    } else {
+      rawContent.remove('custom_slot_${toIndex}_type');
+    }
+
+    final order = rawContent['custom_slot_${fromIndex}_order']?.toString();
+    if (order != null && order.isNotEmpty) {
+      rawContent['custom_slot_${toIndex}_order'] = order;
+    } else {
+      rawContent.remove('custom_slot_${toIndex}_order');
+    }
+
+    // 3. Copy text overrides
+    final fromTitleKey = 'card_${fromIndex + 1}_title';
+    final fromSubKey = 'card_${fromIndex + 1}_subtitle';
+    final toTitleKey = 'card_${toIndex + 1}_title';
+    final toSubKey = 'card_${toIndex + 1}_subtitle';
+
+    final textOverrides = Map<String, dynamic>.from(rawContent['text_overrides'] as Map<String, dynamic>? ?? {});
+    if (textOverrides.containsKey(fromTitleKey)) {
+      textOverrides[toTitleKey] = textOverrides[fromTitleKey];
+    } else {
+      textOverrides.remove(toTitleKey);
+    }
+    if (textOverrides.containsKey(fromSubKey)) {
+      textOverrides[toSubKey] = textOverrides[fromSubKey];
+    } else {
+      textOverrides.remove(toSubKey);
+    }
+    if (textOverrides.isEmpty) {
+      rawContent.remove('text_overrides');
+    } else {
+      rawContent['text_overrides'] = textOverrides;
+    }
+
+    // 4. Copy font size overrides
+    final fontSizeOverrides = Map<String, dynamic>.from(rawContent['font_size_overrides'] as Map<String, dynamic>? ?? {});
+    if (fontSizeOverrides.containsKey(fromTitleKey)) {
+      fontSizeOverrides[toTitleKey] = fontSizeOverrides[fromTitleKey];
+    } else {
+      fontSizeOverrides.remove(toTitleKey);
+    }
+    if (fontSizeOverrides.containsKey(fromSubKey)) {
+      fontSizeOverrides[toSubKey] = fontSizeOverrides[fromSubKey];
+    } else {
+      fontSizeOverrides.remove(toSubKey);
+    }
+    if (fontSizeOverrides.isEmpty) {
+      rawContent.remove('font_size_overrides');
+    } else {
+      rawContent['font_size_overrides'] = fontSizeOverrides;
+    }
+
+    // 5. Copy font weight overrides
+    final fontWeightOverrides = Map<String, dynamic>.from(rawContent['font_weight_overrides'] as Map<String, dynamic>? ?? {});
+    if (fontWeightOverrides.containsKey(fromTitleKey)) {
+      fontWeightOverrides[toTitleKey] = fontWeightOverrides[fromTitleKey];
+    } else {
+      fontWeightOverrides.remove(toTitleKey);
+    }
+    if (fontWeightOverrides.containsKey(fromSubKey)) {
+      fontWeightOverrides[toSubKey] = fontWeightOverrides[fromSubKey];
+    } else {
+      fontWeightOverrides.remove(toSubKey);
+    }
+    if (fontWeightOverrides.isEmpty) {
+      rawContent.remove('font_weight_overrides');
+    } else {
+      rawContent['font_weight_overrides'] = fontWeightOverrides;
+    }
+  }
+
+  /// Deletes a custom slot at removeIndex, shifts following slots, flushes vacated tail slots, and decrements count.
+  void deleteCustomSlot(int removeIndex) {
+    int currentCount = 1;
+    final rawCount = rawContent['custom_images_count'];
+    if (rawCount is int) currentCount = rawCount.clamp(1, 6);
+    if (rawCount is String) currentCount = (int.tryParse(rawCount) ?? 1).clamp(1, 6);
+
+    if (currentCount <= 1) {
+      flushCustomSlot(0);
+      rawContent['custom_images_count'] = '1';
+      return;
+    }
+
+    // Shift remaining slots forward
+    for (int i = removeIndex; i < currentCount - 1; i++) {
+      copyCustomSlotData(fromIndex: i + 1, toIndex: i);
+    }
+
+    // Flush vacated tail slots and any slots beyond the new count
+    for (int s = currentCount - 1; s < 6; s++) {
+      flushCustomSlot(s);
+    }
+
+    rawContent['custom_images_count'] = '${currentCount - 1}';
   }
 
   factory SlideData.fromJson(Map<String, dynamic> json, [Map<String, dynamic>? manifestSlideSettings]) {
@@ -6432,6 +6615,19 @@ class _PresentationEditorScreenState extends State<PresentationEditorScreen> {
                   },
                   onImageChanged: (imageKey, path) {
                     setState(() {
+                      if (imageKey == 'custom_images_count') {
+                        final newCount = int.tryParse(path) ?? 1;
+                        if (_selectedTextElementKey != null && _selectedTextElementKey!.startsWith('card_')) {
+                          final parts = _selectedTextElementKey!.split('_');
+                          if (parts.length >= 2) {
+                            final cardNum = int.tryParse(parts[1]);
+                            if (cardNum != null && cardNum > newCount) {
+                              _selectedTextElementKey = null;
+                              _syncSelectedTextController();
+                            }
+                          }
+                        }
+                      }
                       activeSlide.setImagePath(imageKey, path);
                     });
                     _savePresentation();
@@ -6508,7 +6704,7 @@ class _PresentationEditorScreenState extends State<PresentationEditorScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Number of Images',
+                                    'Slots',
                                     style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.w600),
                                   ),
                                   Text(
@@ -6528,8 +6724,25 @@ class _PresentationEditorScreenState extends State<PresentationEditorScreen> {
                                       child: InkWell(
                                         onTap: () {
                                           setState(() {
+                                            if (num < count) {
+                                              for (int s = num; s < 6; s++) {
+                                                activeSlide.flushCustomSlot(s);
+                                              }
+                                              if (_selectedTextElementKey != null && _selectedTextElementKey!.startsWith('card_')) {
+                                                final parts = _selectedTextElementKey!.split('_');
+                                                if (parts.length >= 2) {
+                                                  final cardNum = int.tryParse(parts[1]);
+                                                  if (cardNum != null && cardNum > num) {
+                                                    _selectedTextElementKey = null;
+                                                    _syncSelectedTextController();
+                                                  }
+                                                }
+                                              }
+                                            }
                                             activeSlide.setImagePath('custom_images_count', '$num');
                                           });
+                                          PaintingBinding.instance.imageCache.clear();
+                                          PaintingBinding.instance.imageCache.clearLiveImages();
                                           _savePresentation();
                                         },
                                         borderRadius: BorderRadius.circular(4),
@@ -6613,6 +6826,97 @@ class _PresentationEditorScreenState extends State<PresentationEditorScreen> {
                                     ),
                                   );
                                 }).toList(),
+                              ),
+                              const SizedBox(height: 14),
+                              Text(
+                                'Slot Content Types',
+                                style: TextStyle(color: subtextColor, fontSize: 11.5),
+                              ),
+                              const SizedBox(height: 6),
+                              Column(
+                                children: List.generate(count, (i) {
+                                  final slotKey = 'custom_slot_${i}_type';
+                                  final currentType = activeSlide.rawContent[slotKey]?.toString() ?? 'image';
+
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: Row(
+                                      children: [
+                                        SizedBox(
+                                          width: 48,
+                                          child: Text(
+                                            'Slot ${i + 1}',
+                                            style: TextStyle(
+                                              fontSize: 11.5,
+                                              color: textColor,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Row(
+                                            children: [
+                                              {'type': 'image', 'label': 'Image', 'icon': Icons.image_outlined},
+                                              {'type': 'text', 'label': 'Text', 'icon': Icons.article_outlined},
+                                              {'type': 'both', 'label': 'Both', 'icon': Icons.vertical_split_rounded},
+                                            ].map((t) {
+                                              final tType = t['type'] as String;
+                                              final tLabel = t['label'] as String;
+                                              final tIcon = t['icon'] as IconData;
+                                              final isSel = currentType == tType;
+
+                                              return Expanded(
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                                                  child: InkWell(
+                                                    onTap: () {
+                                                      setState(() {
+                                                        activeSlide.setImagePath(slotKey, tType);
+                                                      });
+                                                      _savePresentation();
+                                                    },
+                                                    borderRadius: BorderRadius.circular(4),
+                                                    child: Container(
+                                                      padding: const EdgeInsets.symmetric(vertical: 4),
+                                                      decoration: BoxDecoration(
+                                                        color: isSel
+                                                            ? _accentColor.withValues(alpha: isLight ? 0.15 : 0.28)
+                                                            : (isLight ? const Color(0xFFF3F4F6) : const Color(0xFF2C3847)),
+                                                        borderRadius: BorderRadius.circular(4),
+                                                        border: Border.all(
+                                                          color: isSel ? _accentColor : cardBorder,
+                                                        ),
+                                                      ),
+                                                      child: Row(
+                                                        mainAxisAlignment: MainAxisAlignment.center,
+                                                        children: [
+                                                          Icon(
+                                                            tIcon,
+                                                            size: 11,
+                                                            color: isSel ? _accentColor : subtextColor,
+                                                          ),
+                                                          const SizedBox(width: 3),
+                                                          Text(
+                                                            tLabel,
+                                                            style: TextStyle(
+                                                              fontSize: 10.5,
+                                                              fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                                                              color: isSel ? _accentColor : textColor,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              );
+                                             }).toList(),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
                               ),
                             ],
                           ),
