@@ -8,6 +8,18 @@ import 'image_helper.dart';
 import 'main.dart';
 import 'presentation_editor_screen.dart';
 
+class UploadedDocument {
+  final String name;
+  final Uint8List bytes;
+  final int sizeBytes;
+
+  UploadedDocument({
+    required this.name,
+    required this.bytes,
+    required this.sizeBytes,
+  });
+}
+
 class CreatePresentationScreen extends StatefulWidget {
   const CreatePresentationScreen({super.key});
 
@@ -19,13 +31,13 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
   final TextEditingController _companyNameController = TextEditingController();
   String _selectedSector = 'Labs & Diagnostics';
 
-  String? _uploadedPdfName;
-  Uint8List? _uploadedPdfBytes;
-  int? _uploadedPdfSizeBytes;
+  final List<UploadedDocument> _uploadedDocuments = [];
 
   String? _uploadedLogoName;
   String? _uploadedLogoPath;
   Uint8List? _uploadedLogoBytes;
+
+  String? _customPrompt;
 
   bool _isGenerating = false;
   String _generationStatus = '';
@@ -44,36 +56,58 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
     super.dispose();
   }
 
-  // Select PDF file using FilePicker
-  Future<void> _selectPdfDocument() async {
+  // Select PDF documents using FilePicker (supports multiple files)
+  Future<void> _selectPdfDocuments() async {
     try {
       final files = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf'],
-        dialogTitle: 'Select PDF Document',
+        dialogTitle: 'Select PDF Documents',
       );
 
       if (files.isNotEmpty) {
-        final file = files.first;
-        final bytes = await file.readAsBytes();
-        final size = bytes.length;
+        final List<UploadedDocument> updatedList = List.from(_uploadedDocuments);
+        for (final file in files) {
+          final bytes = await file.readAsBytes();
+          final existingIndex = updatedList.indexWhere((d) => d.name == file.name);
+          final doc = UploadedDocument(
+            name: file.name,
+            bytes: bytes,
+            sizeBytes: bytes.length,
+          );
+          if (existingIndex >= 0) {
+            updatedList[existingIndex] = doc;
+          } else {
+            updatedList.add(doc);
+          }
+        }
         setState(() {
-          _uploadedPdfName = file.name;
-          _uploadedPdfBytes = bytes;
-          _uploadedPdfSizeBytes = size;
+          _uploadedDocuments
+            ..clear()
+            ..addAll(updatedList);
         });
       }
     } catch (e) {
-      debugPrint('Error picking PDF file: $e');
+      debugPrint('Error picking PDF documents: $e');
     }
   }
 
-  void _removePdfDocument() {
+  void _removeDocument(int index) {
     setState(() {
-      _uploadedPdfName = null;
-      _uploadedPdfBytes = null;
-      _uploadedPdfSizeBytes = null;
+      _uploadedDocuments.removeAt(index);
     });
+  }
+
+  void _clearAllDocuments() {
+    setState(() {
+      _uploadedDocuments.clear();
+    });
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   // Select Logo image using ImageSelectionDialog (opens directly in Logo Presets tab)
@@ -147,7 +181,7 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
     }
   }
 
-  Future<String> _extractPdfText(Uint8List? bytes) async {
+  Future<String> _extractPdfText(Uint8List? bytes, {String? filename}) async {
     if (bytes == null || bytes.isEmpty) {
       return '';
     }
@@ -173,14 +207,326 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
     }
     final txt = buffer.toString().trim();
     if (txt.length < 20) {
-      return 'PDF source document uploaded: ${_uploadedPdfName ?? "Document"}';
+      return 'PDF source document uploaded: ${filename ?? "Document"}';
     }
     return txt;
+  }
+
+  Future<String> _extractAllDocumentsText() async {
+    if (_uploadedDocuments.isEmpty) {
+      return '';
+    }
+    if (_uploadedDocuments.length == 1) {
+      return await _extractPdfText(
+        _uploadedDocuments.first.bytes,
+        filename: _uploadedDocuments.first.name,
+      );
+    }
+
+    final buffer = StringBuffer();
+    for (int i = 0; i < _uploadedDocuments.length; i++) {
+      final doc = _uploadedDocuments[i];
+      buffer.writeln('==================================================');
+      buffer.writeln('DOCUMENT ${i + 1} OF ${_uploadedDocuments.length}: ${doc.name}');
+      buffer.writeln('==================================================');
+      final text = await _extractPdfText(doc.bytes, filename: doc.name);
+      buffer.writeln(text);
+      buffer.writeln();
+    }
+    return buffer.toString().trim();
   }
 
   Future<String> _loadSectorPrompt(String sector) async {
     final fileName = _getPromptFileNameForSector(sector);
     return await rootBundle.loadString('assets/prompts/$fileName');
+  }
+
+  void _resetPromptToDefault() {
+    setState(() {
+      _customPrompt = null;
+    });
+  }
+
+  Future<void> _openPromptEditorDialog() async {
+    String defaultPrompt = '';
+    try {
+      defaultPrompt = await _loadSectorPrompt(_selectedSector);
+    } catch (e) {
+      debugPrint('Error loading sector prompt: $e');
+    }
+
+    final initialText = (_customPrompt != null && _customPrompt!.trim().isNotEmpty)
+        ? _customPrompt!
+        : defaultPrompt;
+    final textController = TextEditingController(text: initialText);
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) {
+        final isLight = Theme.of(dialogCtx).brightness == Brightness.light;
+        final cardBg = isLight ? Colors.white : const Color(0xFF282828);
+        final cardBorder = isLight ? const Color(0xFFE2E8F0) : Colors.white.withValues(alpha: 0.08);
+        final textColor = isLight ? const Color(0xFF0F172A) : Colors.white;
+        final subtextColor = isLight ? const Color(0xFF64748B) : const Color(0xFF9CA3AF);
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final hasChangesFromDefault = textController.text.trim() != defaultPrompt.trim();
+
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Container(
+                width: 1040,
+                height: MediaQuery.of(context).size.height * 0.88,
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.95,
+                  maxHeight: MediaQuery.of(context).size.height * 0.92,
+                ),
+                decoration: BoxDecoration(
+                  color: cardBg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: cardBorder),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isLight ? 0.15 : 0.45),
+                      blurRadius: 28,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    // Modal Header Strip
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                      decoration: BoxDecoration(
+                        border: Border(bottom: BorderSide(color: cardBorder, width: 1)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.tune, size: 18, color: Color(0xFF1877F2)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Edit Initial Prompt - $_selectedSector',
+                                  style: TextStyle(
+                                    color: textColor,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Template: ${_getPromptFileNameForSector(_selectedSector)}',
+                                  style: TextStyle(color: subtextColor, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.close, size: 18, color: subtextColor),
+                            onPressed: () => Navigator.of(dialogCtx).pop(),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Expanded Main Body
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Warning Banner (Red caution alert for JSON schema integrity)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: isLight ? const Color(0xFFFEF2F2) : const Color(0xFF2E1B1B),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: isLight ? const Color(0xFFFCA5A5) : const Color(0xFF991B1B),
+                                  width: 1.2,
+                                ),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.error_outline_rounded, size: 20, color: Color(0xFFDC2626)),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Warning: Modifying the JSON structure will break deck generation',
+                                          style: TextStyle(
+                                            color: isLight ? const Color(0xFF991B1B) : const Color(0xFFFCA5A5),
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          'Do not alter the JSON format, schema definitions, or slide keys. Any changes to the structured format will cause slide parsing to fail and break the generation pipeline. Changes apply strictly to this single generation and will not overwrite the original predefined template.',
+                                          style: TextStyle(
+                                            color: isLight ? const Color(0xFFB91C1C) : const Color(0xFFF87171),
+                                            fontSize: 11.5,
+                                            height: 1.35,
+                                            fontWeight: FontWeight.w400,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            const SizedBox(height: 14),
+
+                            Row(
+                              children: [
+                                Text(
+                                  'Prompt Template Instructions',
+                                  style: TextStyle(color: textColor, fontSize: 12.5, fontWeight: FontWeight.w600),
+                                ),
+                                if (hasChangesFromDefault) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF1877F2).withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Text(
+                                      'Modified',
+                                      style: TextStyle(color: Color(0xFF1877F2), fontSize: 10.5, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                ],
+                                const Spacer(),
+                                Text(
+                                  '${textController.text.length} characters  |  ${textController.text.split('\n').length} lines',
+                                  style: TextStyle(color: subtextColor, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+
+                            // Multi-line Prompt Input expanding to fill full available vertical space
+                            Expanded(
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: isLight ? const Color(0xFFF8FAFC) : const Color(0xFF1E1E1E),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: cardBorder),
+                                ),
+                                child: TextField(
+                                  controller: textController,
+                                  maxLines: null,
+                                  expands: true,
+                                  keyboardType: TextInputType.multiline,
+                                  onChanged: (_) => setDialogState(() {}),
+                                  style: TextStyle(
+                                    color: textColor,
+                                    fontSize: 12.5,
+                                    fontFamily: 'monospace',
+                                    height: 1.45,
+                                  ),
+                                  decoration: InputDecoration(
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.all(14),
+                                    hintText: 'Enter sector prompt instructions...',
+                                    hintStyle: TextStyle(color: subtextColor, fontSize: 12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // Actions Footer
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      decoration: BoxDecoration(
+                        border: Border(top: BorderSide(color: cardBorder, width: 1)),
+                      ),
+                      child: Row(
+                        children: [
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF64748B),
+                              side: BorderSide(color: cardBorder),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              minimumSize: const Size(0, 32),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                            ),
+                            onPressed: () {
+                              textController.text = defaultPrompt;
+                              setDialogState(() {});
+                            },
+                            icon: const Icon(Icons.refresh, size: 14),
+                            label: const Text('Reset to Default', style: TextStyle(fontSize: 11.5)),
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            style: TextButton.styleFrom(
+                              foregroundColor: subtextColor,
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              minimumSize: const Size(0, 32),
+                            ),
+                            onPressed: () => Navigator.of(dialogCtx).pop(),
+                            child: const Text('Cancel', style: TextStyle(fontSize: 12)),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF1877F2),
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: const Size(0, 32),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                            ),
+                            onPressed: () {
+                              final text = textController.text.trim();
+                              setState(() {
+                                if (text == defaultPrompt.trim() || text.isEmpty) {
+                                  _customPrompt = null;
+                                } else {
+                                  _customPrompt = text;
+                                }
+                              });
+                              Navigator.of(dialogCtx).pop();
+                            },
+                            icon: const Icon(Icons.check, size: 14),
+                            label: const Text('Apply Changes', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<Map<String, String>> _getGeminiConfig() async {
@@ -257,14 +603,22 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
 
     setState(() {
       _isGenerating = true;
-      _generationStatus = 'Loading sector prompt template ($_selectedSector)...';
+      _generationStatus = _customPrompt != null
+          ? 'Loading custom prompt for $_selectedSector...'
+          : 'Loading sector prompt template ($_selectedSector)...';
     });
 
     try {
-      final promptContent = await _loadSectorPrompt(_selectedSector);
+      final promptContent = (_customPrompt != null && _customPrompt!.trim().isNotEmpty)
+          ? _customPrompt!
+          : await _loadSectorPrompt(_selectedSector);
 
-      setState(() => _generationStatus = 'Extracting document insights from PDF...');
-      final pdfText = await _extractPdfText(_uploadedPdfBytes);
+      if (_uploadedDocuments.isNotEmpty) {
+        setState(() => _generationStatus = _uploadedDocuments.length > 1
+            ? 'Extracting insights from ${_uploadedDocuments.length} PDF documents...'
+            : 'Extracting document insights from PDF...');
+      }
+      final pdfText = await _extractAllDocumentsText();
 
       final fullPrompt = '$promptContent\n\n'
           '==================================================\n'
@@ -412,10 +766,13 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
           "logo": logoRelativePath
       },
       "sourceContext": {
-        "pdfName": _uploadedPdfName ?? '',
+        "pdfName": _uploadedDocuments.map((d) => d.name).join(', '),
+        "pdfNames": _uploadedDocuments.map((d) => d.name).toList(),
         "pdfText": pdfText,
         "sector": _selectedSector,
         "company": _companyNameController.text.trim(),
+        if (_customPrompt != null && _customPrompt!.trim().isNotEmpty)
+          "customPromptUsed": true,
       },
       "createdAt": nowIso,
       "updatedAt": nowIso
@@ -496,7 +853,7 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Upload your company PDF document and configure metadata to generate a tailored 15-slide presentation.',
+                      'Upload your company PDF documents and configure metadata to generate a tailored 15-slide presentation.',
                       style: TextStyle(color: subtextColor, fontSize: 12),
                     ),
                     const SizedBox(height: 16),
@@ -565,7 +922,14 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
                                 borderRadius: BorderRadius.circular(8),
                                 side: BorderSide(color: cardBorder, width: 1),
                               ),
-                              onSelected: (val) => setState(() => _selectedSector = val),
+                              onSelected: (val) {
+                                if (val != _selectedSector) {
+                                  setState(() {
+                                    _selectedSector = val;
+                                    _customPrompt = null;
+                                  });
+                                }
+                              },
                               itemBuilder: (ctx) => _sectors.map((sec) {
                                 final isSel = sec == _selectedSector;
                                 return PopupMenuItem<String>(
@@ -617,6 +981,9 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
                       ),
                     ),
 
+                    const SizedBox(height: 8),
+                    _buildPromptCustomizationWidget(isLight, textColor, subtextColor, cardBorder),
+
                     const SizedBox(height: 16),
 
                     // 3. Logo Upload/Selection Field
@@ -638,18 +1005,28 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
 
                     const SizedBox(height: 16),
 
-                    // 4. PDF Document Upload Field
+                    // 4. PDF Documents Upload Field
                     Row(
                       children: [
                         Text(
-                          'Source Document (PDF)',
+                          'Source Documents (PDF)',
                           style: TextStyle(color: textColor, fontSize: 12.5, fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(width: 6),
-                        Text(
-                          '(Optional - improves slide accuracy)',
-                          style: TextStyle(color: subtextColor, fontSize: 11),
+                        Flexible(
+                          child: Text(
+                            '(Optional - improves slide accuracy)',
+                            style: TextStyle(color: subtextColor, fontSize: 11),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
+                        if (_uploadedDocuments.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            '${_uploadedDocuments.length} selected',
+                            style: const TextStyle(color: Color(0xFF00A86B), fontSize: 11.5, fontWeight: FontWeight.w600),
+                          ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 6),
@@ -686,6 +1063,34 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
                       const SizedBox(height: 16),
                     ],
 
+                    if (_customPrompt != null && !_isGenerating) ...[
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isLight ? const Color(0xFFFFFBEB) : const Color(0xFF2C2411),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: isLight ? const Color(0xFFFDE68A) : const Color(0xFF78350F)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline, size: 14, color: Color(0xFFD97706)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Custom prompt will be used for this deck generation only.',
+                                style: TextStyle(
+                                  color: isLight ? const Color(0xFF92400E) : const Color(0xFFFDE68A),
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
                     // Generate Action Button
                     SizedBox(
                       width: double.infinity,
@@ -719,10 +1124,105 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
     );
   }
 
+  Widget _buildPromptCustomizationWidget(bool isLight, Color textColor, Color subtextColor, Color cardBorder) {
+    final isCustomized = _customPrompt != null && _customPrompt!.trim().isNotEmpty;
+
+    if (!isCustomized) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isLight ? const Color(0xFFF8FAFC) : const Color(0xFF1E1E1E),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: cardBorder),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.description_outlined, size: 15, color: subtextColor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Predefined prompt: ${_getPromptFileNameForSector(_selectedSector)}',
+                style: TextStyle(color: subtextColor, fontSize: 11.5),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: _isGenerating ? null : _openPromptEditorDialog,
+              borderRadius: BorderRadius.circular(4),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.edit_note_rounded, size: 14, color: Color(0xFF1877F2)),
+                    SizedBox(width: 4),
+                    Text(
+                      'Edit Initial Prompt',
+                      style: TextStyle(color: Color(0xFF1877F2), fontSize: 11.5, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: isLight ? const Color(0xFFEFF6FF) : const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF1877F2).withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.tune, size: 15, color: Color(0xFF1877F2)),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Custom prompt active (this generation only)',
+              style: TextStyle(color: Color(0xFF1877F2), fontSize: 11.5, fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          InkWell(
+            onTap: _isGenerating ? null : _openPromptEditorDialog,
+            borderRadius: BorderRadius.circular(4),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              child: Text(
+                'Edit',
+                style: TextStyle(color: Color(0xFF1877F2), fontSize: 11.5, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          InkWell(
+            onTap: _isGenerating ? null : _resetPromptToDefault,
+            borderRadius: BorderRadius.circular(4),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              child: Text(
+                'Reset to Default',
+                style: TextStyle(color: Color(0xFFEF4444), fontSize: 11.5, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPdfUploadWidget(bool isLight, Color textColor, Color subtextColor, Color cardBorder) {
-    if (_uploadedPdfName == null) {
+    if (_uploadedDocuments.isEmpty) {
       return InkWell(
-        onTap: _isGenerating ? null : _selectPdfDocument,
+        onTap: _isGenerating ? null : _selectPdfDocuments,
         borderRadius: BorderRadius.circular(8),
         child: Container(
           width: double.infinity,
@@ -737,12 +1237,12 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
               const Icon(Icons.cloud_upload_outlined, size: 32, color: Color(0xFF1877F2)),
               const SizedBox(height: 8),
               Text(
-                'Click to browse and upload PDF document',
+                'Click to browse and upload PDF documents',
                 style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w500),
               ),
               const SizedBox(height: 4),
               Text(
-                'Supports company profiles, brochures, product specs (PDF format)',
+                'Supports company profiles, brochures, product specs (select one or multiple PDFs)',
                 style: TextStyle(color: subtextColor, fontSize: 11),
               ),
             ],
@@ -751,44 +1251,117 @@ class _CreatePresentationScreenState extends State<CreatePresentationScreen> {
       );
     }
 
-    final kb = ((_uploadedPdfSizeBytes ?? 0) / 1024).round();
+    final totalBytes = _uploadedDocuments.fold<int>(0, (sum, d) => sum + d.sizeBytes);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: isLight ? const Color(0xFFF0FDF4) : const Color(0xFF1B2B20),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF00A86B).withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.picture_as_pdf, color: Color(0xFF00A86B), size: 24),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _uploadedPdfName!,
-                  style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w600),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (kb > 0)
-                  Text(
-                    '$kb KB',
-                    style: TextStyle(color: subtextColor, fontSize: 11),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          constraints: const BoxConstraints(maxHeight: 200),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: cardBorder),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: const EdgeInsets.all(8),
+              itemCount: _uploadedDocuments.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 6),
+              itemBuilder: (context, index) {
+                final doc = _uploadedDocuments[index];
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isLight ? const Color(0xFFF0FDF4) : const Color(0xFF1B2B20),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFF00A86B).withValues(alpha: 0.35)),
                   ),
-              ],
+                  child: Row(
+                    children: [
+                      const Icon(Icons.picture_as_pdf, color: Color(0xFF00A86B), size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              doc.name,
+                              style: TextStyle(color: textColor, fontSize: 12.5, fontWeight: FontWeight.w600),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (doc.sizeBytes > 0)
+                              Text(
+                                _formatFileSize(doc.sizeBytes),
+                                style: TextStyle(color: subtextColor, fontSize: 10.5),
+                              ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.redAccent, size: 16),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                        tooltip: 'Remove ${doc.name}',
+                        onPressed: _isGenerating ? null : () => _removeDocument(index),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.close, color: Colors.redAccent, size: 18),
-            tooltip: 'Remove PDF',
-            onPressed: _isGenerating ? null : _removePdfDocument,
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            InkWell(
+              onTap: _isGenerating ? null : _selectPdfDocuments,
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isLight ? const Color(0xFFF0F9FF) : const Color(0xFF1E293B),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFF1877F2).withValues(alpha: 0.3)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.add, size: 14, color: Color(0xFF1877F2)),
+                    SizedBox(width: 4),
+                    Text(
+                      'Add more PDFs',
+                      style: TextStyle(color: Color(0xFF1877F2), fontSize: 11.5, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Spacer(),
+            Text(
+              'Total: ${_formatFileSize(totalBytes)}',
+              style: TextStyle(color: subtextColor, fontSize: 11),
+            ),
+            if (_uploadedDocuments.length > 1) ...[
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: _isGenerating ? null : _clearAllDocuments,
+                borderRadius: BorderRadius.circular(4),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Text(
+                    'Clear all',
+                    style: TextStyle(color: Color(0xFFEF4444), fontSize: 11, fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
     );
   }
 
